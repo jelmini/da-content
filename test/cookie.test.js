@@ -52,6 +52,58 @@ describe('getCookie', () => {
       expect(result.status).to.equal(401);
     });
 
+    it('sets a protected cookie for the local authoring origin on port 3001', () => {
+      const req = createRequest('http://localhost:8788/org/site/.gimme_cookie', {
+        headers: {
+          Origin: 'http://localhost:3001',
+          Authorization: 'Bearer local-test-token',
+        },
+      });
+      const result = getCookie(req);
+      expect(result.status).to.equal(200);
+      expect(result.headers.get('Access-Control-Allow-Origin')).to.equal('http://localhost:3001');
+      expect(result.headers.get('Access-Control-Allow-Credentials')).to.equal('true');
+      const cookie = result.headers.get('Set-Cookie');
+      expect(cookie).to.include('auth_token=local-test-token');
+      for (const attribute of ['Secure', 'HttpOnly', 'SameSite=None', 'Partitioned']) {
+        expect(cookie).to.include(attribute);
+      }
+    });
+
+    it('accepts the port 3001 credentialed preflight without requiring a token', () => {
+      const req = createRequest('http://localhost:8788/org/site/.gimme_cookie', {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'http://localhost:3001',
+          'Access-Control-Request-Method': 'GET',
+          'Access-Control-Request-Headers': 'authorization',
+        },
+      });
+      const result = getCookie(req);
+      expect(result.status).to.equal(200);
+      expect(result.headers.get('Access-Control-Allow-Origin')).to.equal('http://localhost:3001');
+      expect(result.headers.get('Access-Control-Allow-Credentials')).to.equal('true');
+      expect(result.headers.get('Set-Cookie')).to.equal(null);
+    });
+
+    it('still requires a token from the port 3001 origin', () => {
+      const result = getCookie(createRequest('http://localhost:8788/org/site/.gimme_cookie', {
+        headers: { Origin: 'http://localhost:3001' },
+      }));
+      expect(result.status).to.equal(401);
+      expect(result.headers.get('Set-Cookie')).to.equal(null);
+    });
+
+    for (const origin of ['http://localhost:3002', 'http://localhost.evil.example:3001']) {
+      it(`does not trust neighboring origins: ${origin}`, () => {
+        const result = getCookie(createRequest('http://localhost:8788/org/site/.gimme_cookie', {
+          headers: { Origin: origin, Authorization: 'Bearer local-test-token' },
+        }));
+        expect(result.status).to.equal(403);
+        expect(result.headers.get('Set-Cookie')).to.equal(null);
+      });
+    }
+
     it('accepts pattern origin https://X-da-live--adobe.aem.live', async () => {
       const req = createRequest('https://example.com/org/site/.gimme_cookie', {
         headers: { Origin: 'https://main-da-live--adobe.aem.live' },
